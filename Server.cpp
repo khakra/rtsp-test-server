@@ -1,6 +1,8 @@
 #include <string>
 #include <deque>
 #include <cstdlib>
+#include <csignal>
+#include <cstring>
 
 #include <fmt/format.h>
 
@@ -32,6 +34,43 @@ static void DisableVaapi() {
 #define TEST "test"
 
 static std::unique_ptr<spdlog::logger> Log;
+static GMainLoop* g_mainLoop = nullptr;
+
+static void SignalHandler(int signal) {
+    const char* signalName = strsignal(signal);
+
+    if (signal == SIGSEGV || signal == SIGABRT || signal == SIGFPE || signal == SIGBUS || signal == SIGILL) {
+        // Crash signals - log and exit immediately
+        if (Log) {
+            Log->critical("Server crashed with signal {} ({})", signal, signalName ? signalName : "unknown");
+            Log->flush();
+        }
+        // Re-raise the signal to get core dump and proper exit code
+        std::signal(signal, SIG_DFL);
+        std::raise(signal);
+    } else if (signal == SIGINT || signal == SIGTERM) {
+        // Graceful shutdown signals
+        if (Log) {
+            Log->info("Received signal {} ({}), shutting down...", signal, signalName ? signalName : "unknown");
+        }
+        if (g_mainLoop) {
+            g_main_loop_quit(g_mainLoop);
+        }
+    }
+}
+
+static void SetupSignalHandlers() {
+    // Crash signals
+    std::signal(SIGSEGV, SignalHandler);
+    std::signal(SIGABRT, SignalHandler);
+    std::signal(SIGFPE, SignalHandler);
+    std::signal(SIGBUS, SignalHandler);
+    std::signal(SIGILL, SignalHandler);
+
+    // Termination signals
+    std::signal(SIGINT, SignalHandler);
+    std::signal(SIGTERM, SignalHandler);
+}
 
 struct Config {
     uint16_t port = 9554;
@@ -88,6 +127,9 @@ static void LoadConfig(Config* config)
 int main(int argc, char *argv[])
 {
     InitLogger();
+    SetupSignalHandlers();
+
+    Log->info("=== RTSP Test Server starting ===");
 
     Config config;
     LoadConfig(&config);
@@ -169,10 +211,20 @@ int main(int argc, char *argv[])
 
     GMainLoopPtr loopPtr(g_main_loop_new(nullptr, FALSE));
     GMainLoop* loop = loopPtr.get();
+    g_mainLoop = loop;  // Store for signal handler
 
     gst_rtsp_server_attach(server, nullptr);
 
+    Log->info("Server started successfully on port {}", config.port);
+    Log->info("Available streams:");
+    for (const auto& mountPoint : createMountPoints) {
+        Log->info("  rtsp://localhost:{}/{} (H.264)", config.port, mountPoint.first);
+        Log->info("  rtsp://localhost:{}/{}-vp8 (VP8)", config.port, mountPoint.first);
+    }
+
     g_main_loop_run(loop);
+
+    Log->info("=== RTSP Test Server exiting normally ===");
 
     return 0;
 }
