@@ -1,5 +1,6 @@
 #include <string>
 #include <deque>
+#include <cstdlib>
 
 #include <fmt/format.h>
 
@@ -11,6 +12,16 @@
 #include "CxxPtr/libconfigDestroy.h"
 
 #include "ConfigHelpers.h"
+
+// Disable VA-API hardware acceleration to prevent crashes on systems
+// without proper GPU support (e.g., nouveau driver issues, headless servers).
+// This server only uses software encoders (x264, vp8) so VA-API is not needed.
+static void DisableVaapi() {
+    // Setting LIBVA_DRIVER_NAME to a non-existent driver prevents libva
+    // from probing hardware drivers that may crash (like nouveau).
+    // Using "null" as it's a recognized dummy driver name.
+    setenv("LIBVA_DRIVER_NAME", "null", 0);
+}
 
 #define BARS  "bars"
 #define WHITE "white"
@@ -107,6 +118,7 @@ int main(int argc, char *argv[])
         {TEST, "smpte"},
     };
 
+    DisableVaapi();
     gst_init(&argc, &argv);
 
     GstRTSPServerPtr staticServer(gst_rtsp_server_new());
